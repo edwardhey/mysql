@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -85,19 +86,23 @@ func (mc *mysqlConn) markBadConn(err error) error {
 }
 
 func (mc *mysqlConn) Begin() (driver.Tx, error) {
-	return mc.begin(false)
+	return mc.begin(context.Background(), false)
 }
 
-func (mc *mysqlConn) begin(readOnly bool) (driver.Tx, error) {
+func (mc *mysqlConn) begin(ctx context.Context, readOnly bool) (driver.Tx, error) {
 	if mc.closed.IsSet() {
 		errLog.Print(ErrInvalidConn)
 		return nil, driver.ErrBadConn
 	}
 	var q string
-	if readOnly {
-		q = "START TRANSACTION READ ONLY"
+	if xid := ctx.Value("xid"); xid == nil {
+		if readOnly {
+			q = "START TRANSACTION READ ONLY"
+		} else {
+			q = "START TRANSACTION"
+		}
 	} else {
-		q = "START TRANSACTION"
+		q = fmt.Sprintf("XA START '%s'", xid.(string))
 	}
 	err := mc.exec(q)
 	if err == nil {
@@ -495,8 +500,7 @@ func (mc *mysqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 			return nil, err
 		}
 	}
-
-	return mc.begin(opts.ReadOnly)
+	return mc.begin(ctx, opts.ReadOnly)
 }
 
 func (mc *mysqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
