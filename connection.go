@@ -102,8 +102,8 @@ func (mc *mysqlConn) begin(ctx context.Context, readOnly bool) (driver.Tx, error
 			q = "START TRANSACTION"
 		}
 	} else {
-		xids := strings.Split(xid.(string), ":")
-		q = fmt.Sprintf("XA START '%s', '%s'", xids[0], xids[1])
+		//xids := strings.Split(xid.(string), ":")
+		q = fmt.Sprintf("XA START '%s'", xid.(string))
 	}
 	err := mc.exec(q)
 	if err == nil {
