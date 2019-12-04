@@ -43,6 +43,7 @@ type mysqlConn struct {
 	finished chan<- struct{}
 	canceled atomicError // set non-nil if conn is canceled
 	closed   atomicBool  // set when conn is closed, before closech is closed
+	xid      string
 }
 
 // Handles parameters set in DSN after the connection is established
@@ -102,9 +103,11 @@ func (mc *mysqlConn) begin(ctx context.Context, readOnly bool) (driver.Tx, error
 			q = "START TRANSACTION"
 		}
 	} else {
+		mc.xid = xid.(string)
 		//xids := strings.Split(xid.(string), ":")
 		q = fmt.Sprintf("XA START '%s'", xid.(string))
 	}
+
 	err := mc.exec(q)
 	if err == nil {
 		return &mysqlTx{mc}, err
