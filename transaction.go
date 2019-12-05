@@ -18,6 +18,8 @@ func (tx *mysqlTx) Commit() (err error) {
 	}
 	if tx.mc.xid == "" {
 		err = tx.mc.exec("COMMIT")
+	} else {
+		_ = tx.mc.Close()
 	}
 	tx.mc = nil
 	return
@@ -29,6 +31,8 @@ func (tx *mysqlTx) Rollback() (err error) {
 	}
 	if tx.mc.xid == "" {
 		err = tx.mc.exec("ROLLBACK")
+	} else {
+		_ = tx.mc.Close()
 	}
 	tx.mc = nil
 	return
