@@ -116,6 +116,7 @@ func (mc *mysqlConn) begin(ctx context.Context, readOnly bool) (driver.Tx, error
 }
 
 func (mc *mysqlConn) Close() (err error) {
+	fmt.Println("mysql close ", mc.closed.IsSet())
 	// Makes Close idempotent
 	if !mc.closed.IsSet() {
 		err = mc.writeCommandPacket(comQuit)
