@@ -22,6 +22,7 @@ func (tx *mysqlTx) Commit() (err error) {
 		err = tx.mc.exec("COMMIT")
 	} else {
 		err = tx.mc.exec(fmt.Sprintf("xa commit '%s'", tx.mc.xid))
+		tx.mc.xid = ""
 	}
 	tx.mc = nil
 	return
@@ -35,6 +36,7 @@ func (tx *mysqlTx) Rollback() (err error) {
 		err = tx.mc.exec("ROLLBACK")
 	} else {
 		err = tx.mc.exec(fmt.Sprintf("xa rollback '%s'", tx.mc.xid))
+		tx.mc.xid = ""
 	}
 	tx.mc = nil
 	return
