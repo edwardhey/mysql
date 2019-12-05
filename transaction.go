@@ -8,8 +8,6 @@
 
 package mysql
 
-import "fmt"
-
 type mysqlTx struct {
 	mc *mysqlConn
 }
@@ -20,8 +18,6 @@ func (tx *mysqlTx) Commit() (err error) {
 	}
 	if tx.mc.xid == "" {
 		err = tx.mc.exec("COMMIT")
-	} else {
-		err = tx.mc.exec(fmt.Sprintf("xa commit '%s'", tx.mc.xid))
 	}
 	tx.mc = nil
 	return
@@ -33,8 +29,6 @@ func (tx *mysqlTx) Rollback() (err error) {
 	}
 	if tx.mc.xid == "" {
 		err = tx.mc.exec("ROLLBACK")
-	} else {
-		err = tx.mc.exec(fmt.Sprintf("xa rollback '%s'", tx.mc.xid))
 	}
 	tx.mc = nil
 	return
