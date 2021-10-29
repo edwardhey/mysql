@@ -12,6 +12,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"net"
+
+	"github.com/opentrx/seata-golang/v2/pkg/apis"
 )
 
 type connector struct {
@@ -37,7 +39,13 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	dial, ok := dials[mc.cfg.Net]
 	dialsLock.RUnlock()
 	if ok {
-		mc.netConn, err = dial(ctx, mc.cfg.Addr)
+		dctx := ctx
+		if mc.cfg.Timeout > 0 {
+			var cancel context.CancelFunc
+			dctx, cancel = context.WithTimeout(ctx, c.cfg.Timeout)
+			defer cancel()
+		}
+		mc.netConn, err = dial(dctx, mc.cfg.Addr)
 	} else {
 		nd := net.Dialer{Timeout: mc.cfg.Timeout}
 		mc.netConn, err = nd.DialContext(ctx, mc.cfg.Net, mc.cfg.Addr)
@@ -137,4 +145,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 // Driver returns &MySQLDriver{}.
 func (c *connector) Driver() driver.Driver {
 	return &MySQLDriver{}
+}
+
+func (c *connector) GetResourceID() string {
+	return c.cfg.DBName
+}
+
+func (c *connector) GetBranchType() apis.BranchSession_BranchType {
+	return apis.AT
 }

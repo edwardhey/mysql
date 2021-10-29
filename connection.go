@@ -12,13 +12,29 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/opentrx/seata-golang/v2/pkg/client/config"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 )
+
+const XID = "XID"
+const GlobalLock = "GlobalLock"
+
+type connCtx struct {
+	xid                string
+	branchID           int64
+	lockKeys           []string
+	sqlUndoItemsBuffer []*sqlUndoLog
+}
 
 type mysqlConn struct {
 	buf              buffer
@@ -44,13 +60,30 @@ type mysqlConn struct {
 	canceled atomicError // set non-nil if conn is canceled
 	closed   atomicBool  // set when conn is closed, before closech is closed
 	xid      string
+
+	ctx *connCtx
+}
+
+func (ctx *connCtx) AppendLockKey(lockKey string) {
+	if ctx.lockKeys == nil {
+		ctx.lockKeys = make([]string, 0)
+	}
+	ctx.lockKeys = append(ctx.lockKeys, lockKey)
+}
+
+func (ctx *connCtx) AppendUndoItem(undoLog *sqlUndoLog) {
+	if ctx.sqlUndoItemsBuffer == nil {
+		ctx.sqlUndoItemsBuffer = make([]*sqlUndoLog, 0)
+	}
+	ctx.sqlUndoItemsBuffer = append(ctx.sqlUndoItemsBuffer, undoLog)
 }
 
 // Handles parameters set in DSN after the connection is established
 func (mc *mysqlConn) handleParams() (err error) {
+	var cmdSet strings.Builder
 	for param, val := range mc.cfg.Params {
 		switch param {
-		// Charset
+		// Charset: character_set_connection, character_set_client, character_set_results
 		case "charset":
 			charsets := strings.Split(val, ",")
 			for i := range charsets {
@@ -64,12 +97,25 @@ func (mc *mysqlConn) handleParams() (err error) {
 				return
 			}
 
-		// System Vars
+		// Other system vars accumulated in a single SET command
 		default:
-			err = mc.exec("SET " + param + "=" + val + "")
-			if err != nil {
-				return
+			if cmdSet.Len() == 0 {
+				// Heuristic: 29 chars for each other key=value to reduce reallocations
+				cmdSet.Grow(4 + len(param) + 1 + len(val) + 30*(len(mc.cfg.Params)-1))
+				cmdSet.WriteString("SET ")
+			} else {
+				cmdSet.WriteByte(',')
 			}
+			cmdSet.WriteString(param)
+			cmdSet.WriteByte('=')
+			cmdSet.WriteString(val)
+		}
+	}
+
+	if cmdSet.Len() > 0 {
+		err = mc.exec(cmdSet.String())
+		if err != nil {
+			return
 		}
 	}
 
@@ -169,7 +215,8 @@ func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
 	}
 
 	stmt := &mysqlStmt{
-		mc: mc,
+		mc:  mc,
+		sql: query,
 	}
 
 	// Read Result
@@ -239,47 +286,21 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 			if v.IsZero() {
 				buf = append(buf, "'0000-00-00'"...)
 			} else {
-				v := v.In(mc.cfg.Loc)
-				v = v.Add(time.Nanosecond * 500) // To round under microsecond
-				year := v.Year()
-				year100 := year / 100
-				year1 := year % 100
-				month := v.Month()
-				day := v.Day()
-				hour := v.Hour()
-				minute := v.Minute()
-				second := v.Second()
-				micro := v.Nanosecond() / 1000
-
-				buf = append(buf, []byte{
-					'\'',
-					digits10[year100], digits01[year100],
-					digits10[year1], digits01[year1],
-					'-',
-					digits10[month], digits01[month],
-					'-',
-					digits10[day], digits01[day],
-					' ',
-					digits10[hour], digits01[hour],
-					':',
-					digits10[minute], digits01[minute],
-					':',
-					digits10[second], digits01[second],
-				}...)
-
-				if micro != 0 {
-					micro10000 := micro / 10000
-					micro100 := micro / 100 % 100
-					micro1 := micro % 100
-					buf = append(buf, []byte{
-						'.',
-						digits10[micro10000], digits01[micro10000],
-						digits10[micro100], digits01[micro100],
-						digits10[micro1], digits01[micro1],
-					}...)
+				buf = append(buf, '\'')
+				buf, err = appendDateTime(buf, v.In(mc.cfg.Loc))
+				if err != nil {
+					return "", err
 				}
 				buf = append(buf, '\'')
 			}
+		case json.RawMessage:
+			buf = append(buf, '\'')
+			if mc.status&statusNoBackslashEscapes == 0 {
+				buf = escapeBytesBackslash(buf, v)
+			} else {
+				buf = escapeBytesQuotes(buf, v)
+			}
+			buf = append(buf, '\'')
 		case []byte:
 			if v == nil {
 				buf = append(buf, "NULL"...)
@@ -343,6 +364,58 @@ func (mc *mysqlConn) Exec(query string, args []driver.Value) (driver.Result, err
 	return nil, mc.markBadConn(err)
 }
 
+func (mc *mysqlConn) execAlways(query string, args []driver.Value) (driver.Result, error) {
+	stmt, err := mc.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	s := stmt.(*mysqlStmt)
+
+	nargs := make([]driver.Value, len(args))
+	for i, arg := range args {
+		nargs[i], err = driver.DefaultParameterConverter.ConvertValue(arg)
+		if err != nil {
+			return nil, fmt.Errorf("sql: converting argument %t type: %v", arg, err)
+		}
+	}
+
+	// Send command
+	err = s.writeExecutePacket(nargs)
+	if err != nil {
+		return nil, s.mc.markBadConn(err)
+	}
+
+	mc.affectedRows = 0
+	mc.insertId = 0
+
+	// Read Result
+	resLen, err := mc.readResultSetHeaderPacket()
+	if err != nil {
+		return nil, err
+	}
+
+	if resLen > 0 {
+		// Columns
+		if err = mc.readUntilEOF(); err != nil {
+			return nil, err
+		}
+
+		// Rows
+		if err := mc.readUntilEOF(); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := mc.discardResults(); err != nil {
+		return nil, err
+	}
+
+	return &mysqlResult{
+		affectedRows: int64(mc.affectedRows),
+		insertId:     int64(mc.insertId),
+	}, nil
+}
+
 // Internal function to execute commands
 func (mc *mysqlConn) exec(query string) error {
 	// Send command
@@ -373,6 +446,34 @@ func (mc *mysqlConn) exec(query string) error {
 
 func (mc *mysqlConn) Query(query string, args []driver.Value) (driver.Rows, error) {
 	return mc.query(query, args)
+}
+
+func (mc *mysqlConn) prepareQuery(query string, args []driver.Value) (*binaryRows, error) {
+	stmt, err := mc.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	s := stmt.(*mysqlStmt)
+	return s.query(args)
+}
+
+func (mc *mysqlConn) readPrepareResultPacket() (uint16, int, error) {
+	data, err := mc.readPacket()
+	if err == nil {
+		// packet indicator [1 byte]
+		if data[0] != iOK {
+			return 0, 0, mc.handleErrorPacket(data)
+		}
+
+		// Column count [16 bit uint]
+		columnCount := binary.LittleEndian.Uint16(data[5:7])
+
+		// Param count [16 bit uint]
+		paramCount := int(binary.LittleEndian.Uint16(data[7:9]))
+
+		return columnCount, paramCount, nil
+	}
+	return 0, 0, err
 }
 
 func (mc *mysqlConn) query(query string, args []driver.Value) (*textRows, error) {
@@ -489,6 +590,10 @@ func (mc *mysqlConn) Ping(ctx context.Context) (err error) {
 
 // BeginTx implements driver.ConnBeginTx interface
 func (mc *mysqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if mc.closed.IsSet() {
+		return nil, driver.ErrBadConn
+	}
+
 	if err := mc.watchCancel(ctx); err != nil {
 		return nil, err
 	}
@@ -504,6 +609,19 @@ func (mc *mysqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 			return nil, err
 		}
 	}
+
+	val := ctx.Value(XID)
+	if val != nil {
+		if xid, ok := val.(string); ok {
+			mc.ctx = &connCtx{
+				xid:                xid,
+				lockKeys:           make([]string, 0),
+				sqlUndoItemsBuffer: make([]*sqlUndoLog, 0),
+			}
+		}
+	}
+
+	//return mc.begin(opts.ReadOnly)
 	return mc.begin(ctx, opts.ReadOnly)
 }
 
@@ -536,6 +654,22 @@ func (mc *mysqlConn) ExecContext(ctx context.Context, query string, args []drive
 		return nil, err
 	}
 	defer mc.finish()
+
+	globalLock := false
+	val := ctx.Value(GlobalLock)
+	if val != nil {
+		globalLock = val.(bool)
+	}
+
+	if globalLock {
+		executable, err := executable(mc, query, dargs)
+		if err != nil {
+			return nil, err
+		}
+		if !executable {
+			return nil, fmt.Errorf("data resource locked by seata transaction coordinator")
+		}
+	}
 
 	return mc.Exec(query, dargs)
 }
@@ -590,7 +724,52 @@ func (stmt *mysqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 	}
 	defer stmt.mc.finish()
 
+	globalLock := false
+	val := ctx.Value(GlobalLock)
+	if val != nil {
+		globalLock = val.(bool)
+	}
+
+	if globalLock {
+		executable, err := executable(stmt.mc, stmt.sql, dargs)
+		if err != nil {
+			return nil, err
+		}
+		if !executable {
+			return nil, fmt.Errorf("data resource locked by seata transaction coordinator")
+		}
+	}
+
 	return stmt.Exec(dargs)
+}
+
+func executable(mc *mysqlConn, sql string, args []driver.Value) (bool, error) {
+	parser := parser.New()
+	act, _ := parser.ParseOneStmt(sql, "", "")
+	deleteStmt, isDelete := act.(*ast.DeleteStmt)
+	if isDelete {
+		executor := &globalLockExecutor{
+			mc:          mc,
+			originalSQL: sql,
+			isUpdate:    false,
+			deleteStmt:  deleteStmt,
+			args:        args,
+		}
+		return executor.Executable(config.GetATConfig().LockRetryInterval, config.GetATConfig().LockRetryTimes)
+	}
+
+	updateStmt, isUpdate := act.(*ast.UpdateStmt)
+	if isUpdate {
+		executor := &globalLockExecutor{
+			mc:          mc,
+			originalSQL: sql,
+			isUpdate:    true,
+			updateStmt:  updateStmt,
+			args:        args,
+		}
+		return executor.Executable(config.GetATConfig().LockRetryInterval, config.GetATConfig().LockRetryTimes)
+	}
+	return true, nil
 }
 
 func (mc *mysqlConn) watchCancel(ctx context.Context) error {
@@ -656,4 +835,10 @@ func (mc *mysqlConn) ResetSession(ctx context.Context) error {
 	}
 	mc.reset = true
 	return nil
+}
+
+// IsValid implements driver.Validator interface
+// (From Go 1.15)
+func (mc *mysqlConn) IsValid() bool {
+	return !mc.closed.IsSet()
 }

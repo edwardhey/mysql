@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 var (
 	tlsConfigLock     sync.RWMutex
 	tlsConfigRegistry map[string]*tls.Config
+	errNilPtr         = errors.New("destination pointer is nil") // embedded in descriptive error
 )
 
 // RegisterTLSConfig registers a custom tls.Config to be used with sql.Open.
@@ -106,27 +108,136 @@ func readBool(input string) (value bool, valid bool) {
 *                           Time related utils                                *
 ******************************************************************************/
 
-func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
-	base := "0000-00-00 00:00:00.0000000"
-	switch len(str) {
+func parseDateTime(b []byte, loc *time.Location) (time.Time, error) {
+	const base = "0000-00-00 00:00:00.000000"
+	switch len(b) {
 	case 10, 19, 21, 22, 23, 24, 25, 26: // up to "YYYY-MM-DD HH:MM:SS.MMMMMM"
-		if str == base[:len(str)] {
-			return
+		if string(b) == base[:len(b)] {
+			return time.Time{}, nil
 		}
-		t, err = time.Parse(timeFormat[:len(str)], str)
+
+		year, err := parseByteYear(b)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if year <= 0 {
+			year = 1
+		}
+
+		if b[4] != '-' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[4])
+		}
+
+		m, err := parseByte2Digits(b[5], b[6])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if m <= 0 {
+			m = 1
+		}
+		month := time.Month(m)
+
+		if b[7] != '-' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[7])
+		}
+
+		day, err := parseByte2Digits(b[8], b[9])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if day <= 0 {
+			day = 1
+		}
+		if len(b) == 10 {
+			return time.Date(year, month, day, 0, 0, 0, 0, loc), nil
+		}
+
+		if b[10] != ' ' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[10])
+		}
+
+		hour, err := parseByte2Digits(b[11], b[12])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if b[13] != ':' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[13])
+		}
+
+		min, err := parseByte2Digits(b[14], b[15])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if b[16] != ':' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[16])
+		}
+
+		sec, err := parseByte2Digits(b[17], b[18])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if len(b) == 19 {
+			return time.Date(year, month, day, hour, min, sec, 0, loc), nil
+		}
+
+		if b[19] != '.' {
+			return time.Time{}, fmt.Errorf("bad value for field: `%c`", b[19])
+		}
+		nsec, err := parseByteNanoSec(b[20:])
+		if err != nil {
+			return time.Time{}, err
+		}
+		return time.Date(year, month, day, hour, min, sec, nsec, loc), nil
 	default:
-		err = fmt.Errorf("invalid time string: %s", str)
-		return
+		return time.Time{}, fmt.Errorf("invalid time bytes: %s", b)
 	}
+}
 
-	// Adjust location
-	if err == nil && loc != time.UTC {
-		y, mo, d := t.Date()
-		h, mi, s := t.Clock()
-		t, err = time.Date(y, mo, d, h, mi, s, t.Nanosecond(), loc), nil
+func parseByteYear(b []byte) (int, error) {
+	year, n := 0, 1000
+	for i := 0; i < 4; i++ {
+		v, err := bToi(b[i])
+		if err != nil {
+			return 0, err
+		}
+		year += v * n
+		n = n / 10
 	}
+	return year, nil
+}
 
-	return
+func parseByte2Digits(b1, b2 byte) (int, error) {
+	d1, err := bToi(b1)
+	if err != nil {
+		return 0, err
+	}
+	d2, err := bToi(b2)
+	if err != nil {
+		return 0, err
+	}
+	return d1*10 + d2, nil
+}
+
+func parseByteNanoSec(b []byte) (int, error) {
+	ns, digit := 0, 100000 // max is 6-digits
+	for i := 0; i < len(b); i++ {
+		v, err := bToi(b[i])
+		if err != nil {
+			return 0, err
+		}
+		ns += v * digit
+		digit /= 10
+	}
+	// nanoseconds has 10-digits. (needs to scale digits)
+	// 10 - 6 = 4, so we have to multiple 1000.
+	return ns * 1000, nil
+}
+
+func bToi(b byte) (int, error) {
+	if b < '0' || b > '9' {
+		return 0, errors.New("not [0-9]")
+	}
+	return int(b - '0'), nil
 }
 
 func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (driver.Value, error) {
@@ -165,6 +276,64 @@ func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (driver.Va
 		), nil
 	}
 	return nil, fmt.Errorf("invalid DATETIME packet length %d", num)
+}
+
+func appendDateTime(buf []byte, t time.Time) ([]byte, error) {
+	year, month, day := t.Date()
+	hour, min, sec := t.Clock()
+	nsec := t.Nanosecond()
+
+	if year < 1 || year > 9999 {
+		return buf, errors.New("year is not in the range [1, 9999]: " + strconv.Itoa(year)) // use errors.New instead of fmt.Errorf to avoid year escape to heap
+	}
+	year100 := year / 100
+	year1 := year % 100
+
+	var localBuf [len("2006-01-02T15:04:05.999999999")]byte // does not escape
+	localBuf[0], localBuf[1], localBuf[2], localBuf[3] = digits10[year100], digits01[year100], digits10[year1], digits01[year1]
+	localBuf[4] = '-'
+	localBuf[5], localBuf[6] = digits10[month], digits01[month]
+	localBuf[7] = '-'
+	localBuf[8], localBuf[9] = digits10[day], digits01[day]
+
+	if hour == 0 && min == 0 && sec == 0 && nsec == 0 {
+		return append(buf, localBuf[:10]...), nil
+	}
+
+	localBuf[10] = ' '
+	localBuf[11], localBuf[12] = digits10[hour], digits01[hour]
+	localBuf[13] = ':'
+	localBuf[14], localBuf[15] = digits10[min], digits01[min]
+	localBuf[16] = ':'
+	localBuf[17], localBuf[18] = digits10[sec], digits01[sec]
+
+	if nsec == 0 {
+		return append(buf, localBuf[:19]...), nil
+	}
+	nsec100000000 := nsec / 100000000
+	nsec1000000 := (nsec / 1000000) % 100
+	nsec10000 := (nsec / 10000) % 100
+	nsec100 := (nsec / 100) % 100
+	nsec1 := nsec % 100
+	localBuf[19] = '.'
+
+	// milli second
+	localBuf[20], localBuf[21], localBuf[22] =
+		digits01[nsec100000000], digits10[nsec1000000], digits01[nsec1000000]
+	// micro second
+	localBuf[23], localBuf[24], localBuf[25] =
+		digits10[nsec10000], digits01[nsec10000], digits10[nsec100]
+	// nano second
+	localBuf[26], localBuf[27], localBuf[28] =
+		digits01[nsec100], digits10[nsec1], digits01[nsec1]
+
+	// trim trailing zeros
+	n := len(localBuf)
+	for n > 0 && localBuf[n-1] == '0' {
+		n--
+	}
+
+	return append(buf, localBuf[:n]...), nil
 }
 
 // zeroDateTime is used in formatBinaryDateTime to avoid an allocation
@@ -698,4 +867,339 @@ func mapIsolationLevel(level driver.IsolationLevel) (string, error) {
 	default:
 		return "", fmt.Errorf("mysql: unsupported isolation level: %v", level)
 	}
+}
+
+type RawBytes []byte
+
+func convertAssignRows(dest, src interface{}) error {
+	// Common cases, without reflect.
+	switch s := src.(type) {
+	case string:
+		switch d := dest.(type) {
+		case *string:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = s
+			return nil
+		case *[]byte:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = []byte(s)
+			return nil
+		case *RawBytes:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = append((*d)[:0], s...)
+			return nil
+		}
+	case []byte:
+		switch d := dest.(type) {
+		case *string:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = string(s)
+			return nil
+		case *interface{}:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = cloneBytes(s)
+			return nil
+		case *[]byte:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = cloneBytes(s)
+			return nil
+		case *RawBytes:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = s
+			return nil
+		}
+	case time.Time:
+		switch d := dest.(type) {
+		case *time.Time:
+			*d = s
+			return nil
+		case *string:
+			*d = s.Format(time.RFC3339Nano)
+			return nil
+		case *[]byte:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = []byte(s.Format(time.RFC3339Nano))
+			return nil
+		case *RawBytes:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = s.AppendFormat((*d)[:0], time.RFC3339Nano)
+			return nil
+		}
+	case decimalDecompose:
+		switch d := dest.(type) {
+		case decimalCompose:
+			return d.Compose(s.Decompose(nil))
+		}
+	case nil:
+		switch d := dest.(type) {
+		case *interface{}:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = nil
+			return nil
+		case *[]byte:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = nil
+			return nil
+		case *RawBytes:
+			if d == nil {
+				return errNilPtr
+			}
+			*d = nil
+			return nil
+		}
+	}
+
+	if scanner, ok := dest.(Scanner); ok {
+		return scanner.Scan(src)
+	}
+
+	var sv reflect.Value
+
+	switch d := dest.(type) {
+	case *string:
+		sv = reflect.ValueOf(src)
+		switch sv.Kind() {
+		case reflect.Bool,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			*d = asString(src)
+			return nil
+		}
+	case *[]byte:
+		sv = reflect.ValueOf(src)
+		if b, ok := asBytes(nil, sv); ok {
+			*d = b
+			return nil
+		}
+	case *RawBytes:
+		sv = reflect.ValueOf(src)
+		if b, ok := asBytes([]byte(*d)[:0], sv); ok {
+			*d = RawBytes(b)
+			return nil
+		}
+	case *bool:
+		bv, err := driver.Bool.ConvertValue(src)
+		if err == nil {
+			*d = bv.(bool)
+		}
+		return err
+	case *interface{}:
+		*d = src
+		return nil
+	}
+
+	dpv := reflect.ValueOf(dest)
+	if dpv.Kind() != reflect.Ptr {
+		return errors.New("destination not a pointer")
+	}
+	if dpv.IsNil() {
+		return errNilPtr
+	}
+
+	if !sv.IsValid() {
+		sv = reflect.ValueOf(src)
+	}
+
+	dv := reflect.Indirect(dpv)
+	if sv.IsValid() && sv.Type().AssignableTo(dv.Type()) {
+		switch b := src.(type) {
+		case []byte:
+			dv.Set(reflect.ValueOf(cloneBytes(b)))
+		default:
+			dv.Set(sv)
+		}
+		return nil
+	}
+
+	if dv.Kind() == sv.Kind() && sv.Type().ConvertibleTo(dv.Type()) {
+		dv.Set(sv.Convert(dv.Type()))
+		return nil
+	}
+
+	// The following conversions use a string value as an intermediate representation
+	// to convert between various numeric types.
+	//
+	// This also allows scanning into user defined types such as "type Int int64".
+	// For symmetry, also check for string destination types.
+	switch dv.Kind() {
+	case reflect.Ptr:
+		if src == nil {
+			dv.Set(reflect.Zero(dv.Type()))
+			return nil
+		}
+		dv.Set(reflect.New(dv.Type().Elem()))
+		return convertAssignRows(dv.Interface(), src)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if src == nil {
+			return fmt.Errorf("converting NULL to %s is unsupported", dv.Kind())
+		}
+		s := asString(src)
+		i64, err := strconv.ParseInt(s, 10, dv.Type().Bits())
+		if err != nil {
+			err = strconvErr(err)
+			return fmt.Errorf("converting driver.Value type %T (%q) to a %s: %v", src, s, dv.Kind(), err)
+		}
+		dv.SetInt(i64)
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if src == nil {
+			return fmt.Errorf("converting NULL to %s is unsupported", dv.Kind())
+		}
+		s := asString(src)
+		u64, err := strconv.ParseUint(s, 10, dv.Type().Bits())
+		if err != nil {
+			err = strconvErr(err)
+			return fmt.Errorf("converting driver.Value type %T (%q) to a %s: %v", src, s, dv.Kind(), err)
+		}
+		dv.SetUint(u64)
+		return nil
+	case reflect.Float32, reflect.Float64:
+		if src == nil {
+			return fmt.Errorf("converting NULL to %s is unsupported", dv.Kind())
+		}
+		s := asString(src)
+		f64, err := strconv.ParseFloat(s, dv.Type().Bits())
+		if err != nil {
+			err = strconvErr(err)
+			return fmt.Errorf("converting driver.Value type %T (%q) to a %s: %v", src, s, dv.Kind(), err)
+		}
+		dv.SetFloat(f64)
+		return nil
+	case reflect.String:
+		if src == nil {
+			return fmt.Errorf("converting NULL to %s is unsupported", dv.Kind())
+		}
+		switch v := src.(type) {
+		case string:
+			dv.SetString(v)
+			return nil
+		case []byte:
+			dv.SetString(string(v))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unsupported Scan, storing driver.Value type %T into type %T", src, dest)
+}
+
+func cloneBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
+}
+
+type decimal interface {
+	decimalDecompose
+	decimalCompose
+}
+
+type decimalDecompose interface {
+	// Decompose returns the internal decimal state in parts.
+	// If the provided buf has sufficient capacity, buf may be returned as the coefficient with
+	// the value set and length set as appropriate.
+	Decompose(buf []byte) (form byte, negative bool, coefficient []byte, exponent int32)
+}
+
+type decimalCompose interface {
+	// Compose sets the internal decimal value from parts. If the value cannot be
+	// represented then an error should be returned.
+	Compose(form byte, negative bool, coefficient []byte, exponent int32) error
+}
+
+// Scanner is an interface used by Scan.
+type Scanner interface {
+	// Scan assigns a value from a database driver.
+	//
+	// The src value will be of one of the following types:
+	//
+	//    int64
+	//    float64
+	//    bool
+	//    []byte
+	//    string
+	//    time.Time
+	//    nil - for NULL values
+	//
+	// An error should be returned if the value cannot be stored
+	// without loss of information.
+	//
+	// Reference types such as []byte are only valid until the next call to Scan
+	// and should not be retained. Their underlying memory is owned by the driver.
+	// If retention is necessary, copy their values before the next call to Scan.
+	Scan(src interface{}) error
+}
+
+func asString(src interface{}) string {
+	switch v := src.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	}
+	rv := reflect.ValueOf(src)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10)
+	case reflect.Float64:
+		return strconv.FormatFloat(rv.Float(), 'g', -1, 64)
+	case reflect.Float32:
+		return strconv.FormatFloat(rv.Float(), 'g', -1, 32)
+	case reflect.Bool:
+		return strconv.FormatBool(rv.Bool())
+	}
+	return fmt.Sprintf("%v", src)
+}
+
+func asBytes(buf []byte, rv reflect.Value) (b []byte, ok bool) {
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.AppendInt(buf, rv.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.AppendUint(buf, rv.Uint(), 10), true
+	case reflect.Float32:
+		return strconv.AppendFloat(buf, rv.Float(), 'g', -1, 32), true
+	case reflect.Float64:
+		return strconv.AppendFloat(buf, rv.Float(), 'g', -1, 64), true
+	case reflect.Bool:
+		return strconv.AppendBool(buf, rv.Bool()), true
+	case reflect.String:
+		s := rv.String()
+		return append(buf, s...), true
+	}
+	return
+}
+
+func strconvErr(err error) error {
+	if ne, ok := err.(*strconv.NumError); ok {
+		return ne.Err
+	}
+	return err
 }
