@@ -1,4 +1,4 @@
-module github.com/opentrx/mysql/v2
+module github.com/edwardhey/mysql
 
 go 1.10
 
@@ -17,5 +17,4 @@ require (
 )
 
 replace github.com/coreos/bbolt => go.etcd.io/bbolt v1.3.4
-
 replace go.etcd.io/bbolt => github.com/coreos/bbolt v1.3.4
