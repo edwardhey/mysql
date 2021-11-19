@@ -13,7 +13,7 @@ import (
 	"database/sql/driver"
 	"net"
 
-	"github.com/opentrx/seata-golang/v2/pkg/apis"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
 )
 
 type connector struct {

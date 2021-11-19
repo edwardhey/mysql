@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/opentrx/seata-golang/v2/pkg/apis"
-	"github.com/opentrx/seata-golang/v2/pkg/client/base/model"
-	"github.com/opentrx/seata-golang/v2/pkg/util/log"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/base/model"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
 )
 
 var dataSourceManager DataSourceManager

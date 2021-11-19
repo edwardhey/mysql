@@ -15,11 +15,11 @@ import (
 
 	"fmt"
 
-	"github.com/opentrx/seata-golang/v2/pkg/apis"
-	"github.com/opentrx/seata-golang/v2/pkg/client/base/exception"
-	"github.com/opentrx/seata-golang/v2/pkg/client/config"
-	"github.com/opentrx/seata-golang/v2/pkg/client/rm"
-	"github.com/opentrx/seata-golang/v2/pkg/util/log"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/base/exception"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/config"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/rm"
+	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
 	"github.com/pkg/errors"
 )
 
