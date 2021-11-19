@@ -95,7 +95,7 @@ func (tx *mysqlTx) Rollback() (err error) {
 	}
 
 	if tx.mc.xid == "" {
-
+		err = tx.mc.exec("ROLLBACK")
 		if tx.mc.ctx != nil {
 			branchID, err := tx.register()
 			if err != nil {
