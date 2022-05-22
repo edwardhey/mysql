@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/config"
+	"git.opencp.cn/sde-base/seata-golang/pkg/client/config"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 )

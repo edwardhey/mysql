@@ -8,8 +8,8 @@ import (
 
 	"google.golang.org/grpc/keepalive"
 
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/parser"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/parser"
 )
 
 var configuration *Configuration

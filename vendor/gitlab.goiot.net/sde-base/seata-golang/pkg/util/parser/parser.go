@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
 )
 
 type envVar struct {

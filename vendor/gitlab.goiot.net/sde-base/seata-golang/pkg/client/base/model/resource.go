@@ -1,7 +1,7 @@
 package model
 
 import (
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
+	"git.opencp.cn/sde-base/seata-golang/pkg/apis"
 )
 
 // Resource used to manage transaction resource

@@ -3,7 +3,7 @@ package exception
 import (
 	"errors"
 
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
+	"git.opencp.cn/sde-base/seata-golang/pkg/apis"
 )
 
 // TransactionException

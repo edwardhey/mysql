@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/types"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/base/exception"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/base/model"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/runtime"
+	"git.opencp.cn/sde-base/seata-golang/pkg/apis"
+	"git.opencp.cn/sde-base/seata-golang/pkg/client/base/exception"
+	"git.opencp.cn/sde-base/seata-golang/pkg/client/base/model"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/runtime"
 	"google.golang.org/grpc/metadata"
 )
 

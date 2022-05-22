@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/apis"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/client/rm"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/mysql"
-	sql2 "gitlab.goiot.net/sde-base/seata-golang/pkg/util/sql"
+	"git.opencp.cn/sde-base/seata-golang/pkg/apis"
+	"git.opencp.cn/sde-base/seata-golang/pkg/client/rm"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/mysql"
+	sql2 "git.opencp.cn/sde-base/seata-golang/pkg/util/sql"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 

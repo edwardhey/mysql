@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
-	"gitlab.goiot.net/sde-base/seata-golang/pkg/util/log"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
 	"github.com/pkg/errors"
 
 	"github.com/edwardhey/mysql/schema"
