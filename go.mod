@@ -3,7 +3,7 @@ module github.com/edwardhey/mysql
 go 1.10
 
 require (
-	git.opencp.cn/sde-base/seata-golang v2.0.6+incompatible // indirect
+	git.opencp.cn/sde-base/seata-golang v2.0.6+incompatible
 	github.com/go-playground/assert/v2 v2.0.1
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.4.3
