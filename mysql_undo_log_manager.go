@@ -72,12 +72,26 @@ func (manager MysqlUndoLogManager) Undo(conn *mysqlConn, xid string, branchID in
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			if err = tx.Rollback(); err != nil {
+				log.Errorf("rollback fail, xid: %s, branchID:%s err:%v", xid, branchID, err)
+				return
+			}
+		}
+	}()
 
 	args := []driver.Value{xid, branchID}
 	rows, err := conn.prepareQuery(SelectUndoLogSql, args)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err = rows.Close(); err != nil {
+			log.Errorf("stmt close fail, xid: %s, branchID:%s err:%v", xid, branchID, err)
+			return
+		}
+	}()
 
 	exists := false
 
@@ -116,7 +130,7 @@ func (manager MysqlUndoLogManager) Undo(conn *mysqlConn, xid string, branchID in
 		branchUndoLog := parser.Decode(rollbackInfo)
 		undoLogs = append(undoLogs, branchUndoLog)
 	}
-	rows.Close()
+	// rows.Close()
 
 	for _, branchUndoLog := range undoLogs {
 		sqlUndoLogs := branchUndoLog.SqlUndoLogs
