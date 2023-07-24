@@ -456,6 +456,7 @@ func (mc *mysqlConn) prepareQuery(query string, args []driver.Value) (*binaryRow
 	if err != nil {
 		return nil, err
 	}
+	defer stmt.Close()
 	s := stmt.(*mysqlStmt)
 	return s.query(args)
 }
