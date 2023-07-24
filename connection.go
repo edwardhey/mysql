@@ -365,12 +365,13 @@ func (mc *mysqlConn) Exec(query string, args []driver.Value) (driver.Result, err
 }
 
 func (mc *mysqlConn) execAlways(query string, args []driver.Value) (driver.Result, error) {
-	return mc.Exec(query, args)
-
 	stmt, err := mc.Prepare(query)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		stmt.Close()
+	}()
 	s := stmt.(*mysqlStmt)
 
 	nargs := make([]driver.Value, len(args))
@@ -451,8 +452,6 @@ func (mc *mysqlConn) Query(query string, args []driver.Value) (driver.Rows, erro
 }
 
 func (mc *mysqlConn) prepareQuery(query string, args []driver.Value) (*binaryRows, error) {
-	return mc.query(query, args)
-
 	stmt, err := mc.Prepare(query)
 	if err != nil {
 		return nil, err

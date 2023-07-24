@@ -194,6 +194,7 @@ func (executor *insertExecutor) BuildTableRecords(pkValues []driver.Value) (*sch
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -295,6 +296,7 @@ func (executor *deleteExecutor) buildTableRecords(tableMeta schema.TableMeta) (*
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -419,6 +421,7 @@ func (executor *updateExecutor) AfterImage(beforeImage *schema.TableRecords) (*s
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -449,6 +452,7 @@ func (executor *updateExecutor) buildTableRecords(tableMeta schema.TableMeta) (*
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -528,6 +532,7 @@ func (executor *globalLockExecutor) buildTableRecords(tableMeta schema.TableMeta
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return buildRecords(tableMeta, rows), nil
 }
 
