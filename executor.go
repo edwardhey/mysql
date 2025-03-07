@@ -15,7 +15,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 
-	"github.com/edwardhey/mysql/schema"
+	"github.com/virteman/mysql/schema"
 )
 
 type insertExecutor struct {
@@ -190,11 +190,14 @@ func (executor *insertExecutor) BuildTableRecords(pkValues []driver.Value) (*sch
 	fmt.Fprintf(&sb, " WHERE `%s` IN ", tableMeta.GetPKName())
 	fmt.Fprint(&sb, appendInParam(len(pkValues)))
 
-	rows, err := executor.mc.prepareQuery(sb.String(), pkValues)
+	rows, stmt, err := executor.mc.prepareQuery(sb.String(), pkValues)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -292,11 +295,14 @@ func (executor *deleteExecutor) AfterImage() (*schema.TableRecords, error) {
 }
 
 func (executor *deleteExecutor) buildTableRecords(tableMeta schema.TableMeta) (*schema.TableRecords, error) {
-	rows, err := executor.mc.prepareQuery(executor.buildBeforeImageSql(tableMeta), executor.args)
+	rows, stmt, err := executor.mc.prepareQuery(executor.buildBeforeImageSql(tableMeta), executor.args)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -325,15 +331,23 @@ func (executor *deleteExecutor) getTableMeta() (schema.TableMeta, error) {
 	return tableMetaCache.GetTableMeta(executor.mc, executor.GetTableName())
 }
 
+// TODO 要处理返回的row和中间stmt的关闭释放资源问题
 func (executor *selectForUpdateExecutor) Execute(lockRetryInterval time.Duration, lockRetryTimes int) (driver.Rows, error) {
 	tableMeta, err := executor.getTableMeta()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := executor.mc.prepareQuery(executor.originalSQL, executor.args)
+	rows, stmt, err := executor.mc.prepareQuery(executor.originalSQL, executor.args)
 	if err != nil {
 		return nil, err
 	}
+
+	defer (func() {
+		if err != nil {
+			rows.Close()
+			stmt.Close()
+		}
+	})()
 	selectPKRows := buildRecords(tableMeta, rows)
 	lockKeys := buildLockKey(selectPKRows)
 	if lockKeys == "" {
@@ -417,11 +431,14 @@ func (executor *updateExecutor) AfterImage(beforeImage *schema.TableRecords) (*s
 	for _, field := range beforeImage.PKFields() {
 		args = append(args, field.Value)
 	}
-	rows, err := executor.mc.prepareQuery(afterImageSql, args)
+	rows, stmt, err := executor.mc.prepareQuery(afterImageSql, args)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -448,11 +465,14 @@ func (executor *updateExecutor) buildAfterImageSql(tableMeta schema.TableMeta, b
 func (executor *updateExecutor) buildTableRecords(tableMeta schema.TableMeta) (*schema.TableRecords, error) {
 	sql := executor.buildBeforeImageSql(tableMeta)
 	argsCount := strings.Count(sql, "?")
-	rows, err := executor.mc.prepareQuery(sql, executor.args[len(executor.args)-argsCount:])
+	rows, stmt, err := executor.mc.prepareQuery(sql, executor.args[len(executor.args)-argsCount:])
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 	return buildRecords(tableMeta, rows), nil
 }
 
@@ -528,11 +548,14 @@ func (executor *globalLockExecutor) getTableMeta() (schema.TableMeta, error) {
 func (executor *globalLockExecutor) buildTableRecords(tableMeta schema.TableMeta) (*schema.TableRecords, error) {
 	sql := executor.buildBeforeImageSql(tableMeta)
 	argsCount := strings.Count(sql, "?")
-	rows, err := executor.mc.prepareQuery(sql, executor.args[len(executor.args)-argsCount:])
+	rows, stmt, err := executor.mc.prepareQuery(sql, executor.args[len(executor.args)-argsCount:])
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 	return buildRecords(tableMeta, rows), nil
 }
 

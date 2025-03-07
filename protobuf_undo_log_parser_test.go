@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-playground/assert/v2"
 
-	"github.com/edwardhey/mysql/schema"
+	"github.com/virteman/mysql/schema"
 )
 
 func getBranchUndoLog() *branchUndoLog {

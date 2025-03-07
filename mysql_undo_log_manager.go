@@ -46,14 +46,14 @@ func GetUndoLogManager() MysqlUndoLogManager {
 }
 
 func (manager MysqlUndoLogManager) FlushUndoLogs(conn *mysqlConn) error {
-	defer func() {
-		if err := recover(); err != nil {
-			errLog.Print(err)
-		}
-	}()
 	ctx := conn.ctx
 	xid := ctx.xid
 	branchID := ctx.branchID
+	defer func() {
+		if err := recover(); err != nil {
+			log.Errorf("FlushUndoLogs fail, xid: %s, branchID:%s err:%v", xid, branchID, err)
+		}
+	}()
 
 	branchUndoLog := &branchUndoLog{
 		Xid:         xid,
@@ -82,15 +82,16 @@ func (manager MysqlUndoLogManager) Undo(conn *mysqlConn, xid string, branchID in
 	}()
 
 	args := []driver.Value{xid, branchID}
-	rows, err := conn.prepareQuery(SelectUndoLogSql, args)
+	rows, stmt, err := conn.prepareQuery(SelectUndoLogSql, args)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err = rows.Close(); err != nil {
-			log.Errorf("stmt close fail, xid: %s, branchID:%s err:%v", xid, branchID, err)
+			log.Errorf("stmt rows close fail, xid: %s, branchID:%s err:%v", xid, branchID, err)
 			return
 		}
+		stmt.Close()
 	}()
 
 	exists := false

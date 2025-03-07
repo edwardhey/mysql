@@ -35,7 +35,7 @@ func (tx *mysqlTx) Commit() (err error) {
 		tx.mc = nil
 	}()
 
-	if tx.mc == nil || tx.mc.closed.IsSet() {
+	if tx.mc == nil || tx.mc.closed.Load() {
 		return ErrInvalidConn
 	}
 	if tx.mc.xid == "" {
@@ -90,7 +90,7 @@ func (tx *mysqlTx) Rollback() (err error) {
 		tx.mc = nil
 	}()
 
-	if tx.mc == nil || tx.mc.closed.IsSet() {
+	if tx.mc == nil || tx.mc.closed.Load() {
 		return ErrInvalidConn
 	}
 

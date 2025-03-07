@@ -173,64 +173,6 @@ func TestEscapeQuotes(t *testing.T) {
 	expect("foo\"bar", "foo\"bar")     // not affected
 }
 
-func TestAtomicBool(t *testing.T) {
-	var ab atomicBool
-	if ab.IsSet() {
-		t.Fatal("Expected value to be false")
-	}
-
-	ab.Set(true)
-	if ab.value != 1 {
-		t.Fatal("Set(true) did not set value to 1")
-	}
-	if !ab.IsSet() {
-		t.Fatal("Expected value to be true")
-	}
-
-	ab.Set(true)
-	if !ab.IsSet() {
-		t.Fatal("Expected value to be true")
-	}
-
-	ab.Set(false)
-	if ab.value != 0 {
-		t.Fatal("Set(false) did not set value to 0")
-	}
-	if ab.IsSet() {
-		t.Fatal("Expected value to be false")
-	}
-
-	ab.Set(false)
-	if ab.IsSet() {
-		t.Fatal("Expected value to be false")
-	}
-	if ab.TrySet(false) {
-		t.Fatal("Expected TrySet(false) to fail")
-	}
-	if !ab.TrySet(true) {
-		t.Fatal("Expected TrySet(true) to succeed")
-	}
-	if !ab.IsSet() {
-		t.Fatal("Expected value to be true")
-	}
-
-	ab.Set(true)
-	if !ab.IsSet() {
-		t.Fatal("Expected value to be true")
-	}
-	if ab.TrySet(true) {
-		t.Fatal("Expected TrySet(true) to fail")
-	}
-	if !ab.TrySet(false) {
-		t.Fatal("Expected TrySet(false) to succeed")
-	}
-	if ab.IsSet() {
-		t.Fatal("Expected value to be false")
-	}
-
-	ab._noCopy.Lock() // we've "tested" it ¯\_(ツ)_/¯
-}
-
 func TestAtomicError(t *testing.T) {
 	var ae atomicError
 	if ae.Value() != nil {
@@ -295,8 +237,10 @@ func TestIsolationLevelMapping(t *testing.T) {
 
 func TestAppendDateTime(t *testing.T) {
 	tests := []struct {
-		t   time.Time
-		str string
+		t            time.Time
+		str          string
+		timeTruncate time.Duration
+		expectedErr  bool
 	}{
 		{
 			t:   time.Date(1234, 5, 6, 0, 0, 0, 0, time.UTC),
@@ -334,32 +278,73 @@ func TestAppendDateTime(t *testing.T) {
 			t:   time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC),
 			str: "0001-01-01",
 		},
+		// Truncated time
+		{
+			t:            time.Date(1234, 5, 6, 0, 0, 0, 0, time.UTC),
+			str:          "1234-05-06",
+			timeTruncate: time.Second,
+		},
+		{
+			t:            time.Date(4567, 12, 31, 12, 0, 0, 0, time.UTC),
+			str:          "4567-12-31 12:00:00",
+			timeTruncate: time.Minute,
+		},
+		{
+			t:            time.Date(2020, 5, 30, 12, 34, 0, 0, time.UTC),
+			str:          "2020-05-30 12:34:00",
+			timeTruncate: 0,
+		},
+		{
+			t:            time.Date(2020, 5, 30, 12, 34, 56, 0, time.UTC),
+			str:          "2020-05-30 12:34:56",
+			timeTruncate: time.Second,
+		},
+		{
+			t:            time.Date(2020, 5, 30, 22, 33, 44, 123000000, time.UTC),
+			str:          "2020-05-30 22:33:44",
+			timeTruncate: time.Second,
+		},
+		{
+			t:            time.Date(2020, 5, 30, 22, 33, 44, 123456000, time.UTC),
+			str:          "2020-05-30 22:33:44.123",
+			timeTruncate: time.Millisecond,
+		},
+		{
+			t:            time.Date(2020, 5, 30, 22, 33, 44, 123456789, time.UTC),
+			str:          "2020-05-30 22:33:44",
+			timeTruncate: time.Second,
+		},
+		{
+			t:            time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC),
+			str:          "9999-12-31 23:59:59.999999999",
+			timeTruncate: 0,
+		},
+		{
+			t:            time.Date(1, 1, 1, 1, 1, 1, 1, time.UTC),
+			str:          "0001-01-01",
+			timeTruncate: 365 * 24 * time.Hour,
+		},
+		// year out of range
+		{
+			t:           time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC),
+			expectedErr: true,
+		},
+		{
+			t:           time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+			expectedErr: true,
+		},
 	}
 	for _, v := range tests {
 		buf := make([]byte, 0, 32)
-		buf, _ = appendDateTime(buf, v.t)
+		buf, err := appendDateTime(buf, v.t, v.timeTruncate)
+		if err != nil {
+			if !v.expectedErr {
+				t.Errorf("appendDateTime(%v) returned an errror: %v", v.t, err)
+			}
+			continue
+		}
 		if str := string(buf); str != v.str {
 			t.Errorf("appendDateTime(%v), have: %s, want: %s", v.t, str, v.str)
-		}
-	}
-
-	// year out of range
-	{
-		v := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
-		buf := make([]byte, 0, 32)
-		_, err := appendDateTime(buf, v)
-		if err == nil {
-			t.Error("want an error")
-			return
-		}
-	}
-	{
-		v := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
-		buf := make([]byte, 0, 32)
-		_, err := appendDateTime(buf, v)
-		if err == nil {
-			t.Error("want an error")
-			return
 		}
 	}
 }
@@ -435,6 +420,33 @@ func TestParseDateTime(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestInvalidDateTime(t *testing.T) {
+	cases := []struct {
+		name string
+		str  string
+		want time.Time
+	}{
+		{
+			name: "parse datetime without day",
+			str:  "0000-00-00 21:30:45",
+			want: time.Date(0, 0, 0, 21, 30, 45, 0, time.UTC),
+		},
+	}
+
+	for _, cc := range cases {
+		t.Run(cc.name, func(t *testing.T) {
+			got, err := parseDateTime([]byte(cc.str), time.UTC)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !cc.want.Equal(got) {
+				t.Fatalf("want: %v, but got %v", cc.want, got)
+			}
+		})
 	}
 }
 

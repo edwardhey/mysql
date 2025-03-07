@@ -11,7 +11,8 @@ import (
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 
-	"github.com/edwardhey/mysql/schema"
+	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
+	"github.com/virteman/mysql/schema"
 )
 
 var EXPIRE_TIME = 15 * time.Minute
@@ -61,7 +62,7 @@ func (cache *TableMetaCache) Refresh(conn *mysqlConn, resourceID string) {
 		if k == key {
 			tMeta, err := cache.FetchSchema(conn, meta.TableName)
 			if err != nil {
-				errLog.Print("get table meta error:%s", err.Error())
+				log.Errorf("get table meta error:%s", err.Error())
 			}
 			if !cmp.Equal(tMeta, meta) {
 				cache.tableMetaCache.Set(key, tMeta, EXPIRE_TIME)
@@ -81,7 +82,7 @@ func (cache *TableMetaCache) FetchSchema(conn *mysqlConn, tableName string) (sch
 	}
 	columnMetas, err := GetColumns(conn, cache.dbName, tableName)
 	if err != nil {
-		return schema.TableMeta{}, errors.Wrapf(err, "Could not found any index in the table: %s", tableName)
+		return schema.TableMeta{}, errors.Wrapf(err, "Could not found any Columns in the table: %s", tableName)
 	}
 	columns := make([]string, 0)
 	for _, column := range columnMetas {
@@ -122,11 +123,14 @@ func GetColumns(conn *mysqlConn, dbName, tableName string) ([]schema.ColumnMeta,
 		"`NUMERIC_PRECISION`, `NUMERIC_SCALE`, `IS_NULLABLE`, `COLUMN_COMMENT`, `COLUMN_DEFAULT`, `CHARACTER_OCTET_LENGTH`, " +
 		"`ORDINAL_POSITION`, `COLUMN_KEY`, `EXTRA`  FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = ? AND `TABLE_NAME` = ?"
 
-	rows, err := conn.prepareQuery(s, args)
+	rows, stmt, err := conn.prepareQuery(s, args)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 
 	result := make([]schema.ColumnMeta, 0)
 
@@ -194,11 +198,14 @@ func GetIndexes(conn *mysqlConn, dbName, tableName string) ([]schema.IndexMeta, 
 	s := "SELECT `INDEX_NAME`, `COLUMN_NAME`, `NON_UNIQUE`, `INDEX_TYPE`, `SEQ_IN_INDEX`, `COLLATION`, `CARDINALITY` " +
 		"FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = ? AND `TABLE_NAME` = ?"
 
-	rows, err := conn.prepareQuery(s, args)
+	rows, stmt, err := conn.prepareQuery(s, args)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer (func() {
+		rows.Close()
+		stmt.Close()
+	})()
 
 	result := make([]schema.IndexMeta, 0)
 
