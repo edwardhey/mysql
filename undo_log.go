@@ -1,7 +1,7 @@
 package mysql
 
 import (
-	"github.com/virteman/mysql/schema"
+	"github.com/edwardhey/mysql/schema"
 )
 
 type sqlUndoLog struct {

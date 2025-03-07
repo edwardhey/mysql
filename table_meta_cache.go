@@ -12,7 +12,7 @@ import (
 	"github.com/pkg/errors"
 
 	"git.opencp.cn/sde-base/seata-golang/pkg/util/log"
-	"github.com/virteman/mysql/schema"
+	"github.com/edwardhey/mysql/schema"
 )
 
 var EXPIRE_TIME = 15 * time.Minute

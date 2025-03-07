@@ -15,7 +15,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 
-	"github.com/virteman/mysql/schema"
+	"github.com/edwardhey/mysql/schema"
 )
 
 type insertExecutor struct {

@@ -1,4 +1,4 @@
-module github.com/virteman/mysql
+module github.com/edwardhey/mysql
 
 go 1.18
 
